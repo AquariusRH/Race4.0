@@ -566,7 +566,7 @@ def top(method_odds_df, method_investment_df, method):
     final_df = final_df.merge(second_last_row_investment_df[['Combination', 'Previous_Investment_Change']], on='Combination', how='left')
     final_df = final_df.merge(third_last_row_investment_df[['Combination', 'Previous_Investment_Change']], on='Combination', how='left')
     
-    # Define column names based on method
+    # Define column names and create styled DataFrames
     if method in ['WIN', 'PLA']:
         final_df.columns = ['馬匹', '賠率', '最初賠率', '排名', '最初排名', '上一次排名', '投注變化', '投注', '一分鐘投注', '五分鐘投注']
         target_df = final_df
@@ -583,7 +583,7 @@ def top(method_odds_df, method_investment_df, method):
             '五分鐘投注': '{:.2f}k'
         }).map(highlight_change, subset=['最初排名', '上一次排名']).bar(subset=['投注變化', '一分鐘投注', '五分鐘投注'], color='rgba(173, 216, 230, 0.5)').hide(axis='index')
         styled_rows_with_plus = rows_with_plus.style.format({'賠率': '{:.1f}'}).map(highlight_change, subset=['最初排名', '上一次排名']).hide(axis='index')
-        return {'main': styled_df, 'plus': styled_rows_with_plus, 'method': method}
+        return {'main': styled_df, 'plus': styled_rows_with_plus, 'notice': None, 'method': method}
     else:
         final_df.columns = ['組合', '賠率', '最初賠率', '排名', '最初排名', '上一次排名', '投注變化', '投注', '一分鐘投注', '五分鐘投注']
         target_df = final_df.head(15)
