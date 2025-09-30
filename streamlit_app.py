@@ -626,7 +626,7 @@ def print_top():
     # Collect all styled DataFrames
     tables = []
     for method in top_list:
-        if odds_dict.get(method) and not odds_dict[method].empty:
+        if odds[method]:
             tables.append(top(odds_dict[method], investment_dict[method], method))
     
     # Create columns for side-by-side display
