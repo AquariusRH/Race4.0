@@ -733,7 +733,7 @@ benchmark_dict = {
     "QIN": benchmark_qin if 'benchmark_qin' in globals() else None,
     "QPL": benchmark_qpl if 'benchmark_qpl' in globals() else None
 }
-
+st.set_page_config(layout="wide")
 # Define the button callback
 def click_start_button():
     st.session_state.reset = True
