@@ -428,7 +428,7 @@ def print_bar_chart(time_now):
       figures.append((fig, method))
     
     # Display charts side by side using st.columns
-  num_cols = min(len(figures), 3)  # Limit to 3 columns for better visibility
+  num_cols = min(len(figures), 2)  # Limit to 3 columns for better visibility
   cols = st.columns(num_cols)
   for idx, (fig, method) in enumerate(figures):
         with cols[idx % num_cols]:
