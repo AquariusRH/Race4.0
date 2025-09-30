@@ -631,25 +631,27 @@ def print_top():
             # Display method name
             st.write(f"**{method_name}**")
             
-            # Create columns for side-by-side display of tables
-            num_cols = 3 if table_data['notice'] is not None else 2  # 3 columns if notice_df exists, else 2
-            cols = st.columns(num_cols)
+            # Create columns with custom width ratios
+            if table_data['notice'] is not None:
+                cols = st.columns([2, 1, 1])  # Main table gets more space, plus and notice share remaining space
+            else:
+                cols = st.columns([2, 1])  # Main table gets more space, plus takes remaining space
             
             # Display main table
             with cols[0]:
                 st.write("主表")
-                st.write(table_data['main'].to_html(),unsafe_allow_html=True)
+                st.markdown(table_data['main'].to_html(classes="styled-table"), unsafe_allow_html=True)
             
             # Display rows with plus signs
             with cols[1]:
                 st.write("排名上升")
-                st.write(table_data['plus'].to_html(),unsafe_allow_html=True)
+                st.markdown(table_data['plus'].to_html(classes="styled-table"), unsafe_allow_html=True)
             
             # Display notice table if applicable
             if table_data['notice'] is not None:
                 with cols[2]:
                     st.write("異常投注")
-                    st.write(table_data['notice'].to_html(),unsafe_allow_html=True)
+                    st.markdown(table_data['notice'].to_html(classes="styled-table"), unsafe_allow_html=True)
 
 def print_highlight():
   for method in ['WIN','QIN']:
@@ -738,7 +740,24 @@ benchmark_dict = {
     "QIN": benchmark_qin if 'benchmark_qin' in globals() else None,
     "QPL": benchmark_qpl if 'benchmark_qpl' in globals() else None
 }
-st.set_page_config(layout="wide")
+st.set_page_config(layout="wide", page_title="Jockey Race")
+st.markdown(
+    """
+    <style>
+    .styled-table {
+        max-width: 100%;
+        width: 100%;
+        overflow-x: auto;
+        display: block;
+    }
+    .styled-table th, .styled-table td {
+        padding: 5px;
+        white-space: nowrap;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True
+)
 # Define the button callback
 def click_start_button():
     st.session_state.reset = True
