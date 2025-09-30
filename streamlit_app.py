@@ -638,18 +638,18 @@ def print_top():
             # Display main table
             with cols[0]:
                 st.write("主表")
-                st.write(table_data['main'].to_html())
+                st.write(table_data['main'].to_html(),unsafe_allow_html=True)
             
             # Display rows with plus signs
             with cols[1]:
                 st.write("排名上升")
-                st.write(table_data['plus'].to_html())
+                st.write(table_data['plus'].to_html(),unsafe_allow_html=True)
             
             # Display notice table if applicable
             if table_data['notice'] is not None:
                 with cols[2]:
                     st.write("異常投注")
-                    st.write(table_data['notice'].to_html())
+                    st.write(table_data['notice'].to_html(),unsafe_allow_html=True)
 
 def print_highlight():
   for method in ['WIN','QIN']:
