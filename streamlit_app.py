@@ -624,7 +624,7 @@ def top(method_odds_df, method_investment_df, method):
 
 def print_top():
     for method in top_list:
-        if odds_dict[method]:
+        if odds[method]:
             table_data = top(odds_dict[method], investment_dict[method], method)
             method_name = methodCHlist[methodlist.index(method)]
             
