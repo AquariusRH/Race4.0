@@ -424,8 +424,16 @@ def print_bar_chart(time_now):
           plt.title('獨贏', fontsize=15)
       elif method == 'PLA':
           plt.title('位置', fontsize=15)
-      st.pyplot(fig)
-
+# Store figure and title
+      figures.append((fig, method))
+    
+    # Display charts side by side using st.columns
+    num_cols = min(len(figures), 3)  # Limit to 3 columns for better visibility
+    cols = st.columns(num_cols)
+    for idx, (fig, method) in enumerate(figures):
+        with cols[idx % num_cols]:
+            st.pyplot(fig)
+            plt.close(fig)
 def weird_data(investments):
 
   for method in methodlist:
