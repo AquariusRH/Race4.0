@@ -623,28 +623,33 @@ def top(method_odds_df, method_investment_df, method):
         return {'main': styled_df, 'plus': styled_rows_with_plus, 'notice': styled_notice_df, 'method': method}
 
 def print_top():
-    # Collect all styled DataFrames
-    tables = []
     for method in top_list:
-        if odds[method]:
-            tables.append(top(odds_dict[method], investment_dict[method], method))
-    
-    # Create columns for side-by-side display
-    num_cols = min(len(tables), 3)  # Limit to 3 columns for better visibility
-    cols = st.columns(num_cols)
-    
-    for idx, table_data in enumerate(tables):
-        with cols[idx % num_cols]:
-            # Display method title
-            method_name = methodCHlist[methodlist.index(table_data['method'])]
+        if odds_dict.get(method) and not odds_dict[method].empty:
+            table_data = top(odds_dict[method], investment_dict[method], method)
+            method_name = methodCHlist[methodlist.index(method)]
+            
+            # Display method name
             st.write(f"**{method_name}**")
+            
+            # Create columns for side-by-side display of tables
+            num_cols = 3 if table_data['notice'] is not None else 2  # 3 columns if notice_df exists, else 2
+            cols = st.columns(num_cols)
+            
             # Display main table
-            st.write(table_data['main'].to_html(), unsafe_allow_html=True)
+            with cols[0]:
+                st.write("主表")
+                st.write(table_data['main'].to_html(), unsafe_allow_html=True)
+            
             # Display rows with plus signs
-            st.write(table_data['plus'].to_html(), unsafe_allow_html=True)
+            with cols[1]:
+                st.write("排名上升")
+                st.write(table_data['plus'].to_html(), unsafe_allow_html=True)
+            
             # Display notice table if applicable
-            if table_data.get('notice') is not None:
-                st.write(table_data['notice'].to_html(), unsafe_allow_html=True)
+            if table_data['notice'] is not None:
+                with cols[2]:
+                    st.write("異常投注")
+                    st.write(table_data['notice'].to_html(), unsafe_allow_html=True)
 
 def print_highlight():
   for method in ['WIN','QIN']:
