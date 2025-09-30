@@ -311,7 +311,7 @@ def print_bar_chart(time_now):
   post_time = post_time_dict[race_no]
   time_25_minutes_before = np.datetime64(post_time - timedelta(minutes=25) + timedelta(hours=8))
   time_5_minutes_before = np.datetime64(post_time - timedelta(minutes=5) + timedelta(hours=8))
-  
+  figures = []
   for method in print_list:
       odds_list = pd.DataFrame()
       df = pd.DataFrame()
@@ -428,9 +428,9 @@ def print_bar_chart(time_now):
       figures.append((fig, method))
     
     # Display charts side by side using st.columns
-    num_cols = min(len(figures), 3)  # Limit to 3 columns for better visibility
-    cols = st.columns(num_cols)
-    for idx, (fig, method) in enumerate(figures):
+  num_cols = min(len(figures), 3)  # Limit to 3 columns for better visibility
+  cols = st.columns(num_cols)
+  for idx, (fig, method) in enumerate(figures):
         with cols[idx % num_cols]:
             st.pyplot(fig)
             plt.close(fig)
