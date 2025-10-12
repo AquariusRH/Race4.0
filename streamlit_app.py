@@ -743,23 +743,7 @@ benchmark_dict = {
     "QPL": benchmark_qpl if 'benchmark_qpl' in globals() else None
 }
 st.set_page_config(layout="wide", page_title="Jockey Race")
-st.markdown(
-    """
-    <style>
-    .styled-table {
-        max-width: 100%;
-        width: 100%;
-        overflow-x: auto;
-        display: block;
-    }
-    .styled-table th, .styled-table td {
-        padding: 5px;
-        white-space: nowrap;
-    }
-    </style>
-    """,
-    unsafe_allow_html=True
-)
+
 # Define the button callback
 def click_start_button():
     st.session_state.reset = True
