@@ -746,16 +746,16 @@ st.set_page_config(layout="wide", page_title="Jockey Race")
 st.markdown(
     """
     <style>
-    .styled-table {
-        max-width: 100%;
-        width: 100%;
-        overflow-x: auto;
-        display: block;
-    }
-    .styled-table th, .styled-table td {
-        padding: 5px;
-        white-space: nowrap;
-    }
+        .styled-table {
+            max-width: 100vw !important;
+            width: 100% !important;
+            overflow-x: auto !important;
+            display: block !important;
+        }
+        .styled-table th, .styled-table td {
+            padding: 5px;
+            white-space: nowrap;
+        }
     </style>
     """,
     unsafe_allow_html=True
