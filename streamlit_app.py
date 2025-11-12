@@ -971,159 +971,168 @@ def print_momentum():
             else:
                 st.write('Nothing')
 
+# ============ 香港時區設定（你指定的方式）============
+HK_TZ = timezone(timedelta(hours=8))
+
+def get_hk_now():
+    """返回當前香港時間（帶時區）"""
+    now_naive = datetime.now()
+    now = now_naive + datere.relativedelta(hours=8)
+    now = now.replace(tzinfo=HK_TZ)
+    return now
+
+# ============ 核心泊松模型（已修正比例 + scipy）============
 def mutual_poisson_deviation_score(
     race_no,
     overall_investment_dict,
     odds_dict,
     post_time_dict,
+    race_dict,
     window_background=20,
-    window_recent=3,
-    min_minutes_to_post=3
+    window_recent=3
 ):
     df_invest = overall_investment_dict['overall']
-    if len(df_invest) < window_background + window_recent:
-        return pd.DataFrame(), ""
+    if len(df_invest) < window_background + window_recent + 5:
+        return pd.DataFrame(), "數據不足"
 
-    # 1. 時間檢查
+    # 使用香港時間
+    now = get_hk_now()
     post_time = post_time_dict.get(race_no)
-    if post_time is None:
-        return pd.DataFrame(), ""
-    
-    HK_TZ = timezone(timedelta(hours=8))
-    now_naive = datetime.now()
-    now = now_naive + datere.relativedelta(hours=8)
-    now = now.replace(tzinfo=HK_TZ)
-    minutes_to_post = (post_time - now).total_seconds() / 60
-    if minutes_to_post <= 0 or minutes_to_post > 30:
-        return pd.DataFrame(), ""
+    if not post_time:
+        return pd.DataFrame(), "未載入開跑時間"
 
-    # 2. 計算注碼比例時間序列
+    # 確保 post_time 也有時區
+    if post_time.tzinfo is None:
+        post_time = post_time.replace(tzinfo=HK_TZ)
+
+    minutes_to_post = (post_time - now).total_seconds() / 60
+    if minutes_to_post <= 0 or minutes_to_post > 35:
+        return pd.DataFrame(), f"非活躍時段（剩餘 {minutes_to_post:.1f} 分）"
+
+    # 1. 注碼比例序列
     total_pool = df_invest.sum(axis=1)
     proportion = df_invest.div(total_pool, axis=0)
 
-    # 3. 背景分布（泊松 λ 估計）
+    # 2. 背景分布
     background = proportion.iloc[-window_background:-window_recent]
     lambda_prop = background.mean()
     std_prop = background.std()
 
-    # 4. 近期比例突增
+    # 3. 近期比例
     recent = proportion.iloc[-window_recent:]
-    recent_mean = recent.mean()
-    deviation = recent_mean - lambda_prop
+    recent_prop = recent.mean()
+    deviation = recent_prop - lambda_prop
+    z_score = deviation / (std_prop + 1e-10)
 
-    # 5. 標準化偏離（Z-score）
-    z_score = deviation / (std_prop + 1e-8)
+    # 4. 正確理論賠率（關鍵！）
+    current_odds_raw = odds_dict['WIN'].iloc[-1].values
+    current_odds = np.where(np.isfinite(current_odds_raw), current_odds_raw, 999)
 
-    # 6. 當前賠率 vs 理論賠率（基於最新比例）
-    current_odds = np.array([
-        x if np.isfinite(x) else 999 
-        for x in odds_dict['WIN'].iloc[-1]
-    ])
-    theoretical_odds = 0.825 / (recent_mean + 1e-8)
-    odds_lag = current_odds - theoretical_odds  # 正值表示市場尚未充分壓低
+    total_recent_prop = recent_prop.sum()
+    current_proportion = recent_prop / np.where(total_recent_prop > 0, total_recent_prop, 1)
+    theoretical_odds = 0.825 / (current_proportion + 1e-12)
+    odds_lag = current_odds - theoretical_odds
 
-    # 7. 綜合評分（MPDS）
-    score = z_score * 10 + np.maximum(odds_lag, 0) * 20
-    score = score * (1 + max(0, (20 - minutes_to_post) / 15))  # 接近關盤加權
+    # 5. p-value（精確）
+    spike_amount = (recent * total_pool.iloc[-window_recent:]).mean()
+    lambda_amount = background.mean() * total_pool.iloc[-window_background:-window_recent].mean()
+    p_values = 1 - poisson.cdf(spike_amount, np.maximum(lambda_amount, 1))
 
-    # 8. 結果表格
-    horses = range(1, len(score) + 1)
+    # 6. 綜合 MPDS 分數
+    score = (
+        z_score * 12 +
+        np.maximum(odds_lag, 0) * 20 +
+        np.where(p_values < 1e-6, 30, 0) +
+        np.where(p_values < 1e-8, 20, 0)
+    )
+    time_weight = max(0, (25 - minutes_to_post) / 15)
+    score *= (1 + time_weight)
+
+    # 7. 建表
     records = []
-    for i, h in enumerate(horses):
-        if score[i] < 20:  # 過濾低分雜訊
+    for i in range(len(score)):
+        if score[i] < 25:
             continue
         records.append({
-            '馬號': h,
+            '馬號': i + 1,
+            '馬名': race_dict[race_no]['馬名'][i],
             '現賠率': f"{current_odds[i]:.2f}",
             '理論賠率': f"{theoretical_odds[i]:.2f}",
-            '賠率落後': f"{odds_lag[i]:.2f}",
+            '賠率落後': f"{max(odds_lag[i], 0):.2f}",
             '比例Z值': f"{z_score[i]:.2f}",
+            'p-value': f"{p_values[i]:.2e}",
             'MPDS分數': f"{score[i]:.1f}",
-            '建議': '強烈推薦' if score[i] > 50 else '值得跟進' if score[i] > 35 else '觀察'
+            '建議': '強烈推薦' if score[i] > 65 else '值得跟進' if score[i] > 45 else '觀察'
         })
 
     result_df = pd.DataFrame(records).sort_values('MPDS分數', ascending=False)
 
-    # 9. 警報訊息（僅在高置信度時觸發）
+    # 8. 警報
     alert = ""
-    if len(result_df) > 0 and result_df.iloc[0]['MPDS分數'] > 50:
+    if len(result_df) > 0 and result_df.iloc[0]['MPDS分數'] > 65:
         top = result_df.iloc[0]
         alert = (
-            f"第 {race_no} 場 馬號 {top['馬號']} | "
-            f"Z = {top['比例Z值']} | "
-            f"賠率落後 {top['賠率落後']} | "
-            f"MPDS = {top['MPDS分數']:.1f} | "
-            f"建議在 {minutes_to_post:.1f} 分鐘前跟進"
+            f"泊松崩潰｜第 {race_no} 場｜{top['馬號']}號 {top['馬名']}｜"
+            f"Z={top['比例Z值']}｜p={top['p-value']}｜"
+            f"賠率落後 {top['賠率落後']}｜MPDS={top['MPDS分數']:.1f}｜"
+            f"剩餘 {minutes_to_post:.1f} 分鐘"
         )
 
     return result_df, alert
 
-def display_poisson_prediction():
-    result_df, alert = mutual_poisson_deviation_score(
-        race_no=race_no,
-        overall_investment_dict=st.session_state.overall_investment_dict,
-        odds_dict=st.session_state.odds_dict,
-        post_time_dict=st.session_state.post_time_dict
-    )
-    """
-    在 Streamlit 中顯示 Poisson 互助盤預測結果
-    """
-    if result_df.empty and not alert:
-        st.info("互助盤泊松模型監測中，未發現顯著異常（MPDS < 20）")
+def display_poisson_prediction(race_no, alert="", result_df=pd.DataFrame()):
+    st.subheader(f"第 {race_no} 場 · 互助盤泊松偏差模型（MPDS）")
+
+    # 香港時間倒數
+    now = get_hk_now()
+    post_time = st.session_state.post_time_dict.get(race_no)
+    if post_time and post_time.tzinfo is None:
+        post_time = post_time.replace(tzinfo=HK_TZ)
+    if post_time:
+        mins_left = (post_time - now).total_seconds() / 60
+        st.caption(f"香港時間：{now.strftime('%H:%M:%S')} | 離開跑：{mins_left:.1f} 分鐘")
+
+    if alert:
+        st.error("警告: " + alert)
+
+    if result_df.empty:
+        st.info("監測中，未發現顯著泊松偏差（MPDS < 25）")
         return
 
-    # 主標題
-    st.subheader(f"第 {race_no} 場 · 互助盤泊松偏差預測（MPDS）")
+    styled = result_df.style\
+        .bar(subset=['MPDS分數'], color='#ff4b4b')\
+        .bar(subset=['賠率落後'], color='#ffa940')\
+        .apply(lambda row: [
+            'background: #ff0000; color: white; font-weight: bold'
+            if row['建議'] == '強烈推薦'
+            else 'background: #fffbe6; font-weight: bold'
+            if row['建議'] == '值得跟進'
+            else ''
+            for _ in row
+        ], axis=1)\
+        .format({
+            '現賠率': '{:.2f}',
+            '理論賠率': '{:.2f}',
+            '賠率落後': '{:.2f}',
+            '比例Z值': '{:.2f}',
+            'MPDS分數': '{:.1f}',
+            'p-value': '{:.2e}'
+        })
 
-    # 警報訊息（高亮）
-    if alert:
-        st.error("Alert: " + alert)
+    st.dataframe(styled, use_container_width=True)
 
-    if not result_df.empty:
-        # 樣式處理
-        styled_df = result_df.style\
-            .bar(subset=['MPDS分數'], color='#ff4b4b', vmin=0, vmax=100)\
-            .bar(subset=['賠率落後'], color='#ff6b6b')\
-            .apply(lambda row: [
-                'background: #330000; color: gold; font-weight: bold' 
-                if row['建議'] == '強烈推薦' 
-                else 'background: #fff2cc; font-weight: bold' 
-                if row['建議'] == '值得跟進' 
-                else ''
-                for _ in row
-            ], axis=1)\
-            .format({
-                '現賠率': '{:.2f}',
-                '理論賠率': '{:.2f}',
-                '賠率落後': '{:.2f}',
-                '比例Z值': '{:.2f}',
-                'MPDS分數': '{:.1f}'
-            })
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.metric("最高 MPDS", f"{result_df['MPDS分數'].max():.1f}")
+    with col2:
+        st.metric("領先馬號", f"{result_df.iloc[0]['馬號']} 號")
+    with col3:
+        st.metric("最大賠率落後", f"{result_df['賠率落後'].max():.2f}")
 
-        st.dataframe(styled_df, use_container_width=True)
-
-        # 統計摘要
-        top_score = result_df['MPDS分數'].max()
-        top_horse = result_df.iloc[0]['馬號']
-        lag_max = result_df['賠率落後'].max()
-
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            st.metric("最高 MPDS 分數", f"{top_score:.1f}")
-        with col2:
-            st.metric("領先馬號", f"{top_horse} 號")
-        with col3:
-            st.metric("最大賠率落後", f"{lag_max:.2f}")
-
-        # 建議文字
-        if top_score > 60:
-            st.success("高置信度買入信號：建議在關盤前 2 分鐘內跟進")
-        elif top_score > 40:
-            st.warning("中等置信度信號：可考慮跟進，注意資金管理")
-        else:
-            st.info("輕度異常：可納入觀察名單")
-    else:
-        st.write("目前無符合條件的馬匹（MPDS ≥ 20）")
+    if result_df.iloc[0]['MPDS分數'] > 70:
+        st.success("極高置信度：建議立即跟進")
+    elif result_df.ilod[0]['MPDS分數'] > 55:
+        st.warning("高置信度：可重倉跟進")
         
 def main(time_now,odds,investments,period):
   save_odds_data(time_now,odds)
