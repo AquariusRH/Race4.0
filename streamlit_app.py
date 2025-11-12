@@ -992,37 +992,42 @@ def mutual_poisson_deviation_score(
     if len(df_invest) < window_background + window_recent + 5:
         return pd.DataFrame(), "數據不足"
 
-    # 使用香港時間
+    # 香港時間
     now = get_hk_now()
     post_time = post_time_dict.get(race_no)
     if not post_time:
         return pd.DataFrame(), "未載入開跑時間"
-
-    # 確保 post_time 也有時區
     if post_time.tzinfo is None:
         post_time = post_time.replace(tzinfo=HK_TZ)
 
     minutes_to_post = (post_time - now).total_seconds() / 60
     if minutes_to_post <= 0 or minutes_to_post > 35:
-        return pd.DataFrame(), f"非活躍時段（剩餘 {minutes_to_post:.1f} 分）"
+        return pd.DataFrame(), f"非活躍時段（{minutes_to_post:.1f}分）"
 
-    # 1. 注碼比例序列
+    # 關鍵修復：只取「本場參賽馬匹」的欄位
+    current_horses = len(race_dict[race_no]['馬名'])  # 例如 12
+    if df_invest.shape[1] < current_horses:
+        return pd.DataFrame(), "注碼資料不完整"
+
+    # 強制截取前 current_horses 欄（避免 15 vs 12 問題）
+    df_invest = df_invest.iloc[:, :current_horses].copy()
+
+    # 重新計算比例
     total_pool = df_invest.sum(axis=1)
     proportion = df_invest.div(total_pool, axis=0)
 
-    # 2. 背景分布
+    # 背景與近期
     background = proportion.iloc[-window_background:-window_recent]
-    lambda_prop = background.mean()
-    std_prop = background.std()
-
-    # 3. 近期比例
     recent = proportion.iloc[-window_recent:]
+
+    lambda_prop = background.mean()
+    std_prop = background.std() + 1e-10
     recent_prop = recent.mean()
     deviation = recent_prop - lambda_prop
-    z_score = deviation / (std_prop + 1e-10)
+    z_score = deviation / std_prop
 
-    # 4. 正確理論賠率（關鍵！）
-    current_odds_raw = odds_dict['WIN'].iloc[-1].values
+    # 正確理論賠率
+    current_odds_raw = odds_dict['WIN'].iloc[-1].values[:current_horses]
     current_odds = np.where(np.isfinite(current_odds_raw), current_odds_raw, 999)
 
     total_recent_prop = recent_prop.sum()
@@ -1030,12 +1035,24 @@ def mutual_poisson_deviation_score(
     theoretical_odds = 0.825 / (current_proportion + 1e-12)
     odds_lag = current_odds - theoretical_odds
 
-    # 5. p-value（精確）
-    spike_amount = (recent * total_pool.iloc[-window_recent:]).mean()
-    lambda_amount = background.mean() * total_pool.iloc[-window_background:-window_recent].mean()
-    p_values = 1 - poisson.cdf(spike_amount, np.maximum(lambda_amount, 1))
+    # 精確 p-value（關鍵：確保兩陣列同形）
+    spike_amount = (recent * total_pool.iloc[-window_recent:]).mean().values
+    lambda_amount = (background * total_pool.iloc[-window_background:-window_recent].mean()).mean().values
 
-    # 6. 綜合 MPDS 分數
+    # 確保 shape 一致
+    spike_amount = np.array(spike_amount, dtype=float)
+    lambda_amount = np.array(lambda_amount, dtype=float)
+    mu = np.maximum(lambda_amount, 1)
+
+    # 安全計算 p-value（避免廣播錯誤）
+    p_values = np.zeros_like(spike_amount)
+    for i in range(len(spike_amount)):
+        if mu[i] > 0:
+            p_values[i] = 1 - poisson.cdf(spike_amount[i], mu[i])
+        else:
+            p_values[i] = 1.0
+
+    # MPDS 分數
     score = (
         z_score * 12 +
         np.maximum(odds_lag, 0) * 20 +
@@ -1045,7 +1062,7 @@ def mutual_poisson_deviation_score(
     time_weight = max(0, (25 - minutes_to_post) / 15)
     score *= (1 + time_weight)
 
-    # 7. 建表
+    # 建表
     records = []
     for i in range(len(score)):
         if score[i] < 25:
@@ -1064,16 +1081,10 @@ def mutual_poisson_deviation_score(
 
     result_df = pd.DataFrame(records).sort_values('MPDS分數', ascending=False)
 
-    # 8. 警報
     alert = ""
     if len(result_df) > 0 and result_df.iloc[0]['MPDS分數'] > 65:
         top = result_df.iloc[0]
-        alert = (
-            f"泊松崩潰｜第 {race_no} 場｜{top['馬號']}號 {top['馬名']}｜"
-            f"Z={top['比例Z值']}｜p={top['p-value']}｜"
-            f"賠率落後 {top['賠率落後']}｜MPDS={top['MPDS分數']:.1f}｜"
-            f"剩餘 {minutes_to_post:.1f} 分鐘"
-        )
+        alert = f"泊松崩潰｜{top['馬號']}號 {top['馬名']}｜Z={top['比例Z值']}｜p={top['p-value']}｜落後 {top['賠率落後']}｜MPDS={top['MPDS分數']:.1f}"
 
     return result_df, alert
 
