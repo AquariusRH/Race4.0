@@ -1080,9 +1080,15 @@ def mutual_poisson_deviation_score(
 
     return result_df, alert
 
-def display_poisson_prediction(race_no, alert="", result_df=pd.DataFrame()):
+def display_poisson_prediction():
     st.subheader(f"第 {race_no} 場 · 互助盤泊松偏差模型（MPDS）")
-
+    result_df, alert = mutual_poisson_deviation_score(
+        race_no=race_no,
+        overall_investment_dict=st.session_state.overall_investment_dict,
+        odds_dict=st.session_state.odds_dict,
+        post_time_dict=st.session_state.post_time_dict,
+        race_dict=st.session_state.race_dict
+        )
     # 香港時間倒數
     now = get_hk_now()
     post_time = st.session_state.post_time_dict.get(race_no)
