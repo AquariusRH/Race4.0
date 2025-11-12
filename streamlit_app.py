@@ -1113,32 +1113,47 @@ def display_poisson_prediction():
         race_dict=st.session_state.race_dict
         )
     # 香港時間倒數
+    # 香港時間
     now = get_hk_now()
     post_time = st.session_state.post_time_dict.get(race_no)
     if post_time and post_time.tzinfo is None:
         post_time = post_time.replace(tzinfo=HK_TZ)
     if post_time:
-        mins_left = (post_time - now).total_seconds() / 60
-        st.caption(f"香港時間：{now.strftime('%H:%M:%S')} | 離開跑：{mins_left:.1f} 分鐘")
+        mins = (post_time - now).total_seconds() / 60
+        st.caption(f"香港時間：{now.strftime('%H:%M:%S')} | 離開跑：{mins:.1f} 分")
 
     if alert:
         st.error("警告: " + alert)
 
     if result_df.empty:
-        st.info("監測中，未發現顯著泊松偏差（MPDS < 25）")
+        st.info("監測中，未發現顯著信號（MPDS < 25）")
         return
 
-    styled = result_df.style\
-        .bar(subset=['MPDS分數'], color='#ff4b4b')\
-        .bar(subset=['賠率落後'], color='#ffa940')\
-        .apply(lambda row: [
-            'background: #ff0000; color: white; font-weight: bold'
-            if row['建議'] == '強烈推薦'
-            else 'background: #fffbe6; font-weight: bold'
-            if row['建議'] == '值得跟進'
-            else ''
-            for _ in row
-        ], axis=1)\
+    # === 關鍵修復：在 styled 前，先強制轉數值型別 ===
+    df_display = result_df.copy()
+
+    # 這些欄位必須是 float64
+    numeric_cols = ['現賠率', '理論賠率', '賠率落後', '比例Z值', 'MPDS分數']
+    for col in numeric_cols:
+        if col in df_display.columns:
+            df_display[col] = pd.to_numeric(df_display[col], errors='coerce').fillna(0.0)
+
+    # 確保 MPDS分數 是 float
+    df_display['MPDS分數'] = df_display['MPDS分數'].astype(float)
+
+    # === 安全 styled ===
+    def highlight_recommend(row):
+        if row['建議'] == '強烈推薦':
+            return ['background: #ff0000; color: white; font-weight: bold'] * len(row)
+        elif row['建議'] == '值得跟進':
+            return ['background: #fffbe6; font-weight: bold'] * len(row)
+        else:
+            return [''] * len(row)
+
+    styled = df_display.style\
+        .bar(subset=['MPDS分數'], color='#ff4b4b', vmin=0, vmax=100)\
+        .bar(subset=['賠率落後'], color='#ffa940', vmin=0, vmax=10)\
+        .apply(highlight_recommend, axis=1)\
         .format({
             '現賠率': '{:.2f}',
             '理論賠率': '{:.2f}',
@@ -1150,18 +1165,24 @@ def display_poisson_prediction():
 
     st.dataframe(styled, use_container_width=True)
 
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        st.metric("最高 MPDS", f"{result_df['MPDS分數'].max():.1f}")
-    with col2:
-        st.metric("領先馬號", f"{result_df.iloc[0]['馬號']} 號")
-    with col3:
-        st.metric("最大賠率落後", f"{result_df['賠率落後'].max():.2f}")
+    # 統計卡片（安全取值）
+    if not df_display.empty:
+        top_score = df_display['MPDS分數'].max()
+        top_horse = df_display.iloc[0]['馬號']
+        max_lag = df_display['賠率落後'].max()
 
-    if result_df.iloc[0]['MPDS分數'] > 70:
-        st.success("極高置信度：建議立即跟進")
-    elif result_df.ilod[0]['MPDS分數'] > 55:
-        st.warning("高置信度：可重倉跟進")
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("最高 MPDS", f"{top_score:.1f}")
+        with col2:
+            st.metric("領先馬號", f"{top_horse} 號")
+        with col3:
+            st.metric("最大賠率落後", f"{max_lag:.2f}")
+
+        if top_score > 70:
+            st.success("極高置信度：建議立即跟進")
+        elif top_score > 55:
+            st.warning("高置信度：可重倉跟進")
         
 def main(time_now,odds,investments,period):
   save_odds_data(time_now,odds)
