@@ -884,10 +884,7 @@ def analyze_momentum(
         })
 
     df_momentum = pd.DataFrame(table_data).sort_values(['爆量次數', '當前動量'], ascending=[False, False])
-    HK_TZ = timezone(timedelta(hours=8))
-    now_naive = datetime.now()
-    now = now_naive + datere.relativedelta(hours=8)
-    now = now.replace(tzinfo=HK_TZ)
+    now = get_hk_now()
     post_time_raw = st.session_state.post_time_dict.get(race_no)
     
     if post_time_raw is None:
