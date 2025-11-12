@@ -1113,75 +1113,40 @@ def display_poisson_prediction():
         race_dict=st.session_state.race_dict
         )
     # 香港時間
-    now = get_hk_now()
-    post_time = st.session_state.post_time_dict.get(race_no)
-    if post_time and post_time.tzinfo is None:
-        post_time = post_time.replace(tzinfo=HK_TZ)
-    if post_time:
-        mins = (post_time - now).total_seconds() / 60
-        st.caption(f"香港時間：{now.strftime('%H:%M:%S')} | 離開跑：{mins:.1f} 分 | 背景窗：150秒")
-
-    if alert:
-        st.error("閃電警報: " + alert)
-
     if result_df.empty:
-        st.info("監測中（window=10），未發現閃電信號（MPDS < 30）")
+        st.info("監測中，未發現信號（MPDS < 30）")
         return
 
-    # === 關鍵修復：在 styled 前，先強制轉數值 + p-value 轉 float 再格式化 ===
-    df_display = result_df.copy()
+    # 強制所有數值欄位為 float，防止任何格式錯誤
+    df = result_df.copy()
+    for col in ['現賠率', '理論賠率', '賠率落後', '比例Z值', 'MPDS分數', 'p-value']:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0.0)
 
-    # 強制數值欄位
-    numeric_cols = ['現賠率', '理論賠率', '賠率落後', '比例Z值', 'MPDS分數']
-    for col in numeric_cols:
-        if col in df_display.columns:
-            df_display[col] = pd.to_numeric(df_display[col], errors='coerce').fillna(0.0)
+    # 排序 + 只保留關鍵欄位
+    df = df[['馬號', '馬名', '現賠率', '理論賠率', '賠率落後', '比例Z值', 'p-value', 'MPDS分數', '建議']] \
+           .sort_values('MPDS分數', ascending=False)
 
-    # 關鍵：p-value 必須先轉 float 才能用 {:.2e}
-    if 'p-value' in df_display.columns:
-        df_display['p-value'] = pd.to_numeric(df_display['p-value'], errors='coerce').fillna(1.0)
-
-    # 高亮函數
-    def highlight_recommend(row):
-        if row['建議'] == '強烈推薦':
-            return ['background: #ff0000; color: white; font-weight: bold'] * len(row)
-        elif row['建議'] == '值得跟進':
-            return ['background: #ffeb3b; color: black; font-weight: bold'] * len(row)
-        else:
-            return [''] * len(row)
-
-    # === 安全 styled：p-value 用 lambda 手動格式化 ===
-    styled = df_display.style\
-        .bar(subset=['MPDS分數'], color='#ff1744', vmin=0, vmax=120)\
-        .bar(subset=['賠率落後'], color='#ff9100', vmin=0, vmax=15)\
-        .apply(highlight_recommend, axis=1)\
+    # 極簡格式化：只用 lambda 處理 p-value
+    styled = df.style\
         .format({
             '現賠率': '{:.2f}',
             '理論賠率': '{:.2f}',
             '賠率落後': '{:.2f}',
             '比例Z值': '{:.2f}',
             'MPDS分數': '{:.1f}',
-            # 關鍵：p-value 不能直接用 '{:.2e}'，改用 lambda 手動格式化
-            'p-value': lambda x: f"{x:.2e}" if pd.notna(x) and x < 1 else "1.00e+00"
-        })
+            'p-value': lambda x: f"{x:.2e}" if x > 0 else "1.00e+00"
+        })\
+        .set_properties(**{
+            'text-align': 'center',
+            'font-size': '14px'
+        })\
+        .set_table_styles([
+            {'selector': 'th', 'props': [('background-color', '#f0f2f6'), ('font-weight', 'bold')]},
+            {'selector': 'td', 'props': [('padding', '8px')]},
+        ])
 
-    st.dataframe(styled, use_container_width=True)
-
-    # 統計卡片
-    if not df_display.empty:
-        top_score = df_display['MPDS分數'].max()
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            st.metric("最高 MPDS", f"{top_score:.1f}", delta="window=10 模式")
-        with col2:
-            st.metric("領先馬號", f"{df_display.iloc[0]['馬號']} 號")
-        with col3:
-            st.metric("最小 p-value", f"{df_display['p-value'].min():.2e}")
-
-        if top_score > 80:
-            st.success("極速崩潰！立即全倉！")
-        elif top_score > 65:
-            st.warning("高能信號！重倉跟進！")
+    st.dataframe(styled, use_container_width=True, hide_index=True)
         
 def main(time_now,odds,investments,period):
   save_odds_data(time_now,odds)
