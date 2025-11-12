@@ -989,7 +989,10 @@ def mutual_poisson_deviation_score(
     if post_time is None:
         return pd.DataFrame(), ""
     
-    now = datetime.now()
+    HK_TZ = timezone(timedelta(hours=8))
+    now_naive = datetime.now()
+    now = now_naive + datere.relativedelta(hours=8)
+    now = now.replace(tzinfo=HK_TZ)
     minutes_to_post = (post_time - now).total_seconds() / 60
     if minutes_to_post <= 0 or minutes_to_post > 30:
         return pd.DataFrame(), ""
