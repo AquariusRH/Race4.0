@@ -988,7 +988,7 @@ def mutual_poisson_deviation_score(
     window_recent=3
 ):
     df_invest = overall_investment_dict['overall']
-    if len(df_invest) < window_background + window_recent :
+    if len(df_invest) < window_background + window_recent:
         return pd.DataFrame(), "數據不足"
 
     # 香港時間
@@ -1024,56 +1024,56 @@ def mutual_poisson_deviation_score(
     deviation = recent_prop - lambda_prop
     z_score = deviation / std_prop
 
-    # 當前賠率
-    odds_raw = odds_dict['WIN'].iloc[-1]
-    current_odds = np.array([
-        999.0 if not np.isfinite(x) else float(x)
-        for x in odds_raw.iloc[:n_horses]
-    ])
+    # 關鍵修復：強制轉 float，杜絕字串
+    odds_raw = odds_dict['WIN'].iloc[-1].iloc[:n_horses]
+    current_odds = []
+    for val in odds_raw:
+        try:
+            current_odds.append(float(val))
+        except:
+            current_odds.append(999.0)
+    current_odds = np.array(current_odds, dtype=np.float64)
 
     # 正確比例與理論賠率
     total_recent_prop = float(recent_prop.sum())
     current_proportion = recent_prop / max(total_recent_prop, 1e-8)
     theoretical_odds = 0.825 / (current_proportion + 1e-12)
-    odds_lag = current_odds - theoretical_odds.values  # 強制 .values
+    theoretical_odds = np.array(theoretical_odds, dtype=np.float64)
 
-    # p-value（安全）
+    # 關鍵：odds_lag 必須是 float64
+    odds_lag = current_odds - theoretical_odds
+    odds_lag = np.array(odds_lag, dtype=np.float64)
+
+    # p-value
     spike_amount = (recent * total_pool.iloc[-window_recent:]).mean().values
     lambda_amount = (background.mean() * total_pool.iloc[-window_background:-window_recent].mean()).values
-    mu = np.maximum(lambda_amount, 1.0).astype(float)
+    mu = np.maximum(lambda_amount, 1.0).astype(np.float64)
 
-    p_values = np.zeros(n_horses)
+    p_values = np.zeros(n_horses, dtype=np.float64)
     for i in range(n_horses):
         try:
             p_values[i] = 1 - poisson.cdf(spike_amount[i], mu[i])
         except:
             p_values[i] = 1.0
 
-    # 關鍵修復：強制轉 float64，杜絕 str 污染
+    # 強制所有數值為 float64
     z_score = np.array(z_score, dtype=np.float64)
-    odds_lag = np.array(odds_lag, dtype=np.float64)
-    p_values = np.array(p_values, dtype=np.float64)
-
     score = (
         z_score * 12.0 +
-        np.maximum(odds_lag, 0) * 20.0 +
+        np.maximum(odds_lag, 0.0).astype(np.float64) * 20.0 +  # 強制 float
         np.where(p_values < 1e-6, 30.0, 0.0) +
         np.where(p_values < 1e-8, 20.0, 0.0)
-    )
+    ).astype(np.float64)
 
     time_weight = max(0, (25 - minutes_to_post) / 15)
-    score = score * (1 + time_weight)
+    score = (score * (1 + time_weight)).astype(np.float64)
 
-    # 強制轉 float64（最終保險）
-    score = np.array(score, dtype=np.float64)
-
-    # 建表（使用 zip + 安全索引）
+    # 建表
     records = []
     horse_names = race_dict[race_no]['馬名']
 
-    for i, (s, z, p, lag, curr_o, theo_o) in enumerate(zip(
-        score, z_score, p_values, odds_lag, current_odds, theoretical_odds
-    )):
+    for i in range(n_horses):
+        s = float(score[i])
         if s < 25:
             continue
 
@@ -1082,18 +1082,18 @@ def mutual_poisson_deviation_score(
         records.append({
             '馬號': i + 1,
             '馬名': name,
-            '現賠率': f"{curr_o:.2f}",
-            '理論賠率': f"{theo_o:.2f}",
-            '賠率落後': f"{max(float(lag), 0):.2f}",
-            '比例Z值': f"{float(z):.2f}",
-            'p-value': f"{float(p):.2e}",
-            'MPDS分數': f"{float(s):.1f}",
-            '建議': '強烈推薦' if float(s) > 65 else '值得跟進' if float(s) > 45 else '觀察'
+            '現賠率': f"{current_odds[i]:.2f}",
+            '理論賠率': f"{theoretical_odds[i]:.2f}",
+            '賠率落後': f"{max(odds_lag[i], 0):.2f}",
+            '比例Z值': f"{z_score[i]:.2f}",
+            'p-value': f"{p_values[i]:.2e}",
+            'MPDS分數': f"{s:.1f}",
+            '建議': '強烈推薦' if s > 65 else '值得跟進' if s > 45 else '觀察'
         })
 
     result_df = pd.DataFrame(records).sort_values('MPDS分數', ascending=False)
 
-    # 警報（安全取值）
+    # 警報
     alert = ""
     if len(result_df) > 0:
         top_score = float(result_df.iloc[0]['MPDS分數'])
