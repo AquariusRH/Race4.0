@@ -1051,8 +1051,8 @@ def mutual_poisson_deviation_score(
 
     # === MPDS 分數（無 p-value，純 Z + 落後）===
     score = (
-        z_score * 18 +                    # Z權重 ↑（更靈敏）
-        np.maximum(odds_lag, 0) * 25      # 落後權重 ↑（實戰王道）
+        z_score * 25 +                    # Z權重 ↑（更靈敏）
+        np.maximum(odds_lag, 0) * 28      # 落後權重 ↑（實戰王道）
     )
 
     # === 建表：全用 index i，永不錯位 ===
