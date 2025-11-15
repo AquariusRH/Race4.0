@@ -990,8 +990,7 @@ HK_TZ = timezone(timedelta(hours=8))
 def get_hk_now():
     return datetime.now(HK_TZ)
 
-# ============ 終極正確版：真 Poisson 增量模型 ============
-# ============ 正確版：計算真實注碼增量（不是估計！）============
+# ============ 實戰核武版：無 p-value + 完美對齊 ============
 def mutual_poisson_deviation_score(
     race_no,
     overall_investment_dict,
@@ -1002,8 +1001,8 @@ def mutual_poisson_deviation_score(
     window_recent=3
 ):
     df_invest = overall_investment_dict['overall']
-    if len(df_invest) < window_background + window_recent:
-        return pd.DataFrame(), "數據不足"
+    if len(df_invest) < window_background + window_recent + 5:
+        return pd.DataFrame(), ""
 
     now = get_hk_now()
     post_time = post_time_dict.get(race_no)
@@ -1015,86 +1014,66 @@ def mutual_poisson_deviation_score(
 
     n_horses = len(race_dict[race_no]['馬名'])
     if df_invest.shape[1] < n_horses:
-        return pd.DataFrame(), "注碼不足"
+        return pd.DataFrame(), ""
 
-    df_invest = df_invest.iloc[:, :n_horses].fillna(0).copy()
+    # 強制對齊 + 轉 float
+    df_invest = df_invest.iloc[:, :n_horses].fillna(0).astype(float)
 
-    # === 正確計算「每 15 秒的真實注碼增量」===
-    invest_diff = df_invest.diff().fillna(0)  # 關鍵！這才是真實下注量
-    invest_diff = invest_diff.clip(lower=0)   # 防止負數（極少數異常）
-
-    # 背景增量（過去 10 筆 = 150秒）
-    background_diff = invest_diff.iloc[-window_background:-window_recent]
-    lambda_increment = background_diff.mean()  # 每 15 秒平均下注量（真實 λ）
-
-    # 近期增量（最近 3 筆 = 45秒）
-    recent_diff = invest_diff.iloc[-window_recent:]
-    observed_increment = recent_diff.sum()     # 45秒內總下注量（真實觀測值）
-
-    # === 正確 p-value：P(X ≥ observed | λ × 3) ===
-    # λ 是每 15 秒平均 → 45秒期望 = λ × 3
-    mu_45sec = lambda_increment * window_recent  # 真實期望
-    mu_45sec = np.maximum(mu_45sec, 0.1)         # 避免除零
-
-    p_values = np.zeros(n_horses)
-    for i in range(n_horses):
-        try:
-            # 觀測到「至少」這麼多下注的機率
-            p_values[i] = 1 - poisson.cdf(observed_increment.iloc[:, i].sum(), mu_45sec[i])
-        except:
-            p_values[i] = 1.0
-
-    # 其餘不變（比例 Z、賠率落後等）
+    # === 比例 Z值 ===
     total_pool = df_invest.sum(axis=1)
     proportion = df_invest.div(total_pool + 1e-8, axis=0)
+
     background_prop = proportion.iloc[-window_background:-window_recent]
     recent_prop = proportion.iloc[-window_recent:]
 
     lambda_prop = background_prop.mean()
     std_prop = background_prop.std() + 1e-10
-    z_score = (recent_prop.mean() - lambda_prop) / std_prop
+    recent_mean = recent_prop.mean()
 
-    # 賠率
+    # 關鍵：強制 .values 避免 index 錯位！
+    z_score = (recent_mean.values - lambda_prop.values) / std_prop.values
+
+    # === 當前賠率（防 "--"）===
     odds_raw = odds_dict['WIN'].iloc[-1].iloc[:n_horses]
-    current_odds = [999.0 if not str(x).replace('.','').isdigit() else float(x) for x in odds_raw]
-    current_odds = np.array(current_odds, dtype=float)
+    current_odds = np.array([
+        999.0 if not str(x).replace('.','').isdigit() else float(x)
+        for x in odds_raw
+    ])
 
-    current_proportion = recent_prop.mean()
-    current_proportion = current_proportion / current_proportion.sum()
+    # === 理論賠率：完美對齊！===
+    # 強制 .values + 重新建 array，杜絕 index shift
+    recent_prop_values = recent_mean.values
+    total_prop = recent_prop_values.sum()
+    current_proportion = recent_prop_values / max(total_prop, 1e-8)
     theoretical_odds = 0.825 / (current_proportion + 1e-12)
+
     odds_lag = current_odds - theoretical_odds
 
-    # MPDS 分數
+    # === MPDS 分數（無 p-value，純 Z + 落後）===
     score = (
-        z_score * 15 +
-        np.maximum(odds_lag, 0) * 22 +
-        np.where(p_values < 1e-6, 40, 0) +
-        np.where(p_values < 1e-8, 30, 0)
+        z_score * 18 +                    # Z權重 ↑（更靈敏）
+        np.maximum(odds_lag, 0) * 25      # 落後權重 ↑（實戰王道）
     )
-    score = np.array(score, dtype=float)
 
-    # 建表
+    # === 建表：全用 index i，永不錯位 ===
     records = []
     names = race_dict[race_no]['馬名']
     for i in range(n_horses):
         s = float(score[i])
-        if s < 30:
+        if s < 35:  # 閾值微調
             continue
         records.append({
             '馬號': i + 1,
             '馬名': names[i] if i < len(names) else f"馬{i+1}",
             '現賠率': float(current_odds[i]),
-            '理論賠率': float(theoretical_odds[i]),
-            '賠率落後': float(max(odds_lag[i], 0)),
-            '比例Z值': float(z_score[i]),
-            'p-value': float(p_values[i]),
-            'MPDS分數': s,
-            '建議': '強烈推薦' if s > 70 else '值得跟進' if s > 50 else '觀察'
+            '理論賠率': round(float(theoretical_odds[i]), 2),
+            '賠率落後': round(float(max(odds_lag[i], 0)), 2),
+            '比例Z值': round(float(z_score[i]), 2),
+            'MPDS分數': round(s, 1)
         })
 
     result_df = pd.DataFrame(records).sort_values('MPDS分數', ascending=False)
     return result_df, ""
-
 def display_poisson_prediction():
     st.subheader(f"第 {race_no} 場 · 互助盤泊松偏差模型（MPDS）")
     result_df, alert = mutual_poisson_deviation_score(
@@ -1104,38 +1083,23 @@ def display_poisson_prediction():
         post_time_dict=st.session_state.post_time_dict,
         race_dict=st.session_state.race_dict
         )
-    # 香港時間
+
     if result_df.empty:
-        st.info("監測中，未發現信號（MPDS < 30）")
+        st.info("監測中，無信號（MPDS < 35）")
         return
 
-    # 強制所有數值欄位為 float，防止任何格式錯誤
     df = result_df.copy()
-    for col in ['現賠率', '理論賠率', '賠率落後', '比例Z值', 'MPDS分數', 'p-value']:
-        if col in df.columns:
-            df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0.0)
-
-    # 排序 + 只保留關鍵欄位
-    df = df[['馬號', '馬名', '現賠率', '理論賠率', '賠率落後', '比例Z值', 'p-value', 'MPDS分數', '建議']] \
-           .sort_values('MPDS分數', ascending=False)
-
-    # 極簡格式化：只用 lambda 處理 p-value
     styled = df.style\
         .format({
             '現賠率': '{:.2f}',
             '理論賠率': '{:.2f}',
             '賠率落後': '{:.2f}',
             '比例Z值': '{:.2f}',
-            'MPDS分數': '{:.1f}',
-            'p-value': lambda x: f"{x:.2e}" if x > 0 else "1.00e+00"
-        })\
-        .set_properties(**{
-            'text-align': 'center',
-            'font-size': '14px'
+            'MPDS分數': '{:.1f}'
         })\
         .set_table_styles([
-            {'selector': 'th', 'props': [('background-color', '#f0f2f6'), ('font-weight', 'bold')]},
-            {'selector': 'td', 'props': [('padding', '8px')]},
+            {'selector': 'th', 'props': 'background: #f0f2f6; font-weight: bold; text-align: center;'},
+            {'selector': 'td', 'props': 'text-align: center;'}
         ])
 
     st.dataframe(styled, use_container_width=True, hide_index=True)
