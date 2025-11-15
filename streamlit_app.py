@@ -1005,38 +1005,32 @@ def mutual_poisson_deviation_score(
 
     df = df.iloc[:, :n_horses].fillna(0).astype(float)
 
-    # === 1. 真實注碼增量（每 15 秒）===
+    # === 真 Poisson Test ===
     diff = df.diff().fillna(0).clip(lower=0)
-
-    # === 2. 背景：過去 10 筆的「每 15 秒注碼」===
     bg = diff.iloc[-window_background:-window_recent]
-    lambda_per_15s = bg.mean().values  # (n_horses,)
-
-    # === 3. 近期：最近 3 筆的「每 15 秒注碼」===
     recent = diff.iloc[-window_recent:]
-    observed_per_15s = recent.values  # shape: (3, n_horses)
 
-    # === 4. 真 Poisson Test：對每匹馬做「平均注碼」檢定 ===
+    lambda_per_15s = bg.mean().values
+    observed_per_15s = recent.values  # (3, n_horses)
+
     p_values = np.ones(n_horses)
     for i in range(n_horses):
         mu = max(lambda_per_15s[i], 0.1)
-        observed_mean = observed_per_15s[:, i].mean()
-
-        # 關鍵：Poisson Test —— 觀測平均 > 背景平均？
-        if observed_mean > mu:
-            # P(X ≥ observed_mean) under Poisson(mu)
-            p_values[i] = 1 - poisson.cdf(observed_mean, mu)
+        obs_mean = observed_per_15s[:, i].mean()
+        if obs_mean > mu:
+            p_values[i] = 1 - poisson.cdf(obs_mean, mu)
         else:
             p_values[i] = 1.0
 
-    # === 5. 比例 Z-score ===
+    # === 比例 Z-score ===
     total_pool = df.sum(axis=1)
     prop = df.div(total_pool + 1e-8, axis=0)
     bg_prop = prop.iloc[-window_background:-window_recent].mean()
     recent_prop = prop.iloc[-window_recent:].mean()
-    z_score = (recent_prop - bg_prop) / (prop.iloc[-window_background:-window_recent].std() + 1e-10)
+    std_prop = prop.iloc[-window_background:-window_recent].std()
+    z_score = (recent_prop - bg_prop) / (std_prop + 1e-10)
 
-    # === 6. 賠率落後 ===
+    # === 賠率落後 ===
     odds_raw = odds_dict['WIN'].iloc[-1].iloc[:n_horses]
     current_odds = np.array([
         999.0 if not str(x).replace('.','').isdigit() else float(x)
@@ -1046,7 +1040,7 @@ def mutual_poisson_deviation_score(
     theo_odds = 0.825 / (theo_prop + 1e-12)
     odds_lag = current_odds - theo_odds
 
-    # === 7. MPDS 分數 ===
+    # === MPDS 分數 + 關鍵修復：轉 numpy array 避免 KeyError ===
     score = (
         np.array(z_score) * 15 +
         np.maximum(odds_lag, 0) * 22 +
@@ -1054,11 +1048,11 @@ def mutual_poisson_deviation_score(
         np.where(p_values < 1e-8, 30, 0)
     )
 
-    # === 8. 建表 ===
+    # === 建表：用 .values 取值，永不 KeyError ===
     records = []
     names = race_dict[race_no]['馬名']
     for i in range(n_horses):
-        s = float(score[i])
+        s = float(score[i])  # score 是 numpy array，永遠有 index i
         if s < 30:
             continue
         records.append({
