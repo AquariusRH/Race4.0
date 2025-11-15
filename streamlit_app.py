@@ -979,14 +979,26 @@ def get_hk_now():
     return now
 
 # ============ 真 Poisson Test 模型 ============
+import numpy as np
+import pandas as pd
+from scipy.stats import poisson
+from datetime import datetime, timezone, timedelta
+import streamlit as st
+
+# 香港時區
+HK_TZ = timezone(timedelta(hours=8))
+def get_hk_now():
+    return datetime.now(HK_TZ)
+
+# ============ 終極正確版：真 Poisson 增量模型 ============
 def mutual_poisson_deviation_score(
     race_no,
     overall_investment_dict,
     odds_dict,
     post_time_dict,
     race_dict,
-    window_background=10,
-    window_recent=3
+    window_background=10,  # 150秒
+    window_recent=3        # 45秒
 ):
     df = overall_investment_dict['overall']
     if len(df) < window_background + window_recent + 2:
@@ -1003,34 +1015,38 @@ def mutual_poisson_deviation_score(
     if df.shape[1] < n_horses:
         return pd.DataFrame(), ""
 
+    # 強制對齊
     df = df.iloc[:, :n_horses].fillna(0).astype(float)
 
-    # === 真 Poisson Test ===
-    diff = df.diff().fillna(0).clip(lower=0)
+    # === 1. 真實注碼增量（每 15 秒）===
+    diff = df.diff().fillna(0).clip(lower=0)  # 每筆增加的注碼
+
+    # === 2. 背景：過去 10 筆的「每 15 秒平均注碼」===
     bg = diff.iloc[-window_background:-window_recent]
+    lambda_per_15s = bg.mean()  # shape: (n_horses,)
+
+    # === 3. 近期：最近 3 筆的「總注碼增量」===
     recent = diff.iloc[-window_recent:]
+    observed_45s = recent.sum()  # shape: (n_horses,)
 
-    lambda_per_15s = bg.mean().values
-    observed_per_15s = recent.values  # (3, n_horses)
+    # === 4. Poisson 期望：45秒 = 3 × 15秒平均 ===
+    mu_45s = lambda_per_15s * window_recent
+    mu_45s = np.maximum(mu_45s, 0.1)  # 避免 0
 
-    p_values = np.ones(n_horses)
-    for i in range(n_horses):
-        mu = max(lambda_per_15s[i], 0.1)
-        obs_mean = observed_per_15s[:, i].mean()
-        if obs_mean > mu:
-            p_values[i] = 1 - poisson.cdf(obs_mean, mu)
-        else:
-            p_values[i] = 1.0
+    # === 5. 真 p-value：P(X ≥ observed | μ) ===
+    p_values = np.array([
+        1 - poisson.cdf(observed_45s.iloc[i], mu_45s[i])
+        for i in range(n_horses)
+    ])
 
-    # === 比例 Z-score ===
+    # === 6. 比例 Z-score ===
     total_pool = df.sum(axis=1)
     prop = df.div(total_pool + 1e-8, axis=0)
     bg_prop = prop.iloc[-window_background:-window_recent].mean()
     recent_prop = prop.iloc[-window_recent:].mean()
-    std_prop = prop.iloc[-window_background:-window_recent].std()
-    z_score = (recent_prop - bg_prop) / (std_prop + 1e-10)
+    z_score = (recent_prop - bg_prop) / (prop.iloc[-window_background:-window_recent].std() + 1e-10)
 
-    # === 賠率落後 ===
+    # === 7. 賠率落後 ===
     odds_raw = odds_dict['WIN'].iloc[-1].iloc[:n_horses]
     current_odds = np.array([
         999.0 if not str(x).replace('.','').isdigit() else float(x)
@@ -1040,19 +1056,19 @@ def mutual_poisson_deviation_score(
     theo_odds = 0.825 / (theo_prop + 1e-12)
     odds_lag = current_odds - theo_odds
 
-    # === MPDS 分數 + 關鍵修復：轉 numpy array 避免 KeyError ===
+    # === 8. MPDS 分數 ===
     score = (
-        np.array(z_score) * 15 +
+        z_score * 15 +
         np.maximum(odds_lag, 0) * 22 +
         np.where(p_values < 1e-6, 40, 0) +
         np.where(p_values < 1e-8, 30, 0)
     )
 
-    # === 建表：用 .values 取值，永不 KeyError ===
+    # === 9. 建表 ===
     records = []
     names = race_dict[race_no]['馬名']
     for i in range(n_horses):
-        s = float(score[i])  # score 是 numpy array，永遠有 index i
+        s = float(score[i])
         if s < 30:
             continue
         records.append({
